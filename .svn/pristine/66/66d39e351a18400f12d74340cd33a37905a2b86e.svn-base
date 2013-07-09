@@ -1,0 +1,283 @@
+/**
+ * 爬行一个游戏的数据
+ * @title:CrawlController.java
+ * @Package netease.trading.crawl.httpclient
+ * @author netease-huangze
+ * @date 2012-10-9 下午3:44:34
+ * @version V1.0
+ */
+package common.crawl.framework;
+
+import java.lang.Thread.State;
+
+
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.LinkedBlockingQueue;
+
+import org.apache.http.client.HttpClient;
+
+import org.apache.http.impl.conn.PoolingClientConnectionManager;
+import org.apache.log4j.Logger;
+import org.htmlparser.util.ParserException;
+
+import common.crawl.extractor.impl.LinkExtractBaidu;
+import common.crawl.fetcher.ClientManager;
+import common.io.Constant;
+
+
+
+public class CrawlController {
+	static Logger logger = Logger.getLogger(CrawlController.class);
+	
+	int queueNum = 5;	
+	/**
+	 * 是否采用代理进行抓取
+	 */
+	boolean isProxied = false;
+	GetThread crawlThread[];
+	CrawlContext crawlContext;
+	/**
+	 * 多工作队列，存储待抓取的url
+	 */
+	ConcurrentHashMap<Integer, BlockingQueue<String>> multiQueue = new ConcurrentHashMap<Integer, BlockingQueue<String>>();
+	
+	/**
+	 * 构建多线程抓取的httpclient
+	 */
+	HttpClient httpclient;
+	private List<String> urlSeeds;
+	
+	/**
+	 * @param args
+	 * @throws ParserException 
+	 */
+	public static void main(String[] args) throws ParserException {
+		
+		CrawlContext crawlContext = new CrawlContext();
+		
+
+		List<String> seeds = new ArrayList<String>();
+//		for(int i=1; i <= 10 ; i++){
+//			String url = "http://s.5173.com/search/1900-" + i + ".shtml";
+//			seeds.add(url);
+//		}
+	
+		String url = "http://news.baidu.com/ns?cl=2&rn=20&tn=news&word=%E8%8B%B1%E9%9B%84%E8%81%94%E7%9B%9F&ie=utf-8";
+		seeds.add(url);
+
+		crawlContext.setSeeds(seeds);		
+//		for(String url: seeds){
+//			System.out.println(url);
+//		}
+//		crawlContext.setDataObj(zoneMap);
+		crawlContext.setQueueNum(2);
+//		crawlContext.setStorageDir(Constant.STORAGE_DIR);
+		crawlContext.setWebPageEncoding("utf-8");
+		crawlContext.setLinkExtractor(new LinkExtractBaidu());
+		crawlContext.setProxied(false);
+
+		
+		CrawlController cc = new CrawlController(crawlContext);
+		cc.runCrawl();
+		
+	}
+
+	
+	/**
+	 * 
+	 * @param crawlContext  载入爬行环境：包括种子页面、文件存储目录、传递的信息对象
+	 */
+	public CrawlController(CrawlContext crawlContext){
+		this.crawlContext = crawlContext;
+		this.urlSeeds = this.crawlContext.getSeeds();
+		this.queueNum = this.crawlContext.getQueueNum();
+		this.isProxied = this.crawlContext.isProxied();	
+	}
+	
+	public void addSeed(String url){
+		if(this.urlSeeds!=null){
+			this.urlSeeds.add(url);
+		}
+	}
+
+		
+	public CrawlContext getCrawlContext() {
+		return crawlContext;
+	}
+
+	public void setCrawlContext(CrawlContext crawlContext) {
+		this.crawlContext = crawlContext;
+	}
+
+	/**
+	 * 
+	  * @Description: 初始化httpclient(代理设置)
+	  *  初始化工作队列
+	  *  加载启动页面
+	  *  为每个工作队列建立一个线程
+	  * @return void    
+	  *
+	 */
+	public void init() {
+		
+		//初始化httpclient(代理设置)
+		httpclient = ClientManager.getInstance().getClient(this.isProxied);
+		// 初始化工作队列
+		initQueue(this.queueNum);
+		// 加载启动页面
+		addSeedsToQueue();
+		/**
+		 * 为每个工作队列建立一个线程
+		 */
+		int threadCounts = this.multiQueue.size();
+		crawlThread = new GetThread[threadCounts];
+		for (int i = 0; i < threadCounts; i++) {
+			this.crawlThread[i] = new GetThread(this.httpclient,
+					this.multiQueue, i, this.crawlContext);
+		}		
+	}
+
+	/**
+	 *  
+	 * @Title: initQueue
+	 * @Description: 爬虫的初始化， 包括 建立多个工作队列，载入种子网页，为每个工作队列建立一个线程
+	 * @param
+	 * @return void
+	 * @throws
+	 */
+	public void initQueue(int queueCount) {
+		/**
+		 * 建立多个工作队列
+		 */
+		for (int i = 0; i < queueCount; i++) {
+//			BlockingQueue<String> temp = new ArrayBlockingQueue<String>(3000);
+			BlockingQueue<String> temp = new LinkedBlockingQueue<String>(8196);
+			multiQueue.put(i, temp);
+		}
+	}
+
+	/**
+	 * 载入种子网页
+	 */
+	public void addSeedsToQueue() {
+
+		int queueCounts = this.multiQueue.size();
+		/**
+		 * 将种子网页加载到工作队列中
+		 */
+		int queueId = 0;
+		for (int i = 0; i < urlSeeds.size(); i++) {
+
+			String url = urlSeeds.get(i);
+//			queueId = (url.hashCode() % queueCounts + queueCounts)
+//					% queueCounts;
+			queueId = i % queueCounts;
+			multiQueue.get(queueId).add(url);
+		}
+	}
+
+	/**
+	 * @Title: start
+	 * @Description: 启动多线程
+	 * @param
+	 * @return void
+	 * @throws
+	 */
+
+	public void start() {
+		int size = this.crawlThread.length;
+		for (int i = 0; i < size; i++) {
+			this.crawlThread[i].start();
+		}
+
+	}
+
+	/**
+	 * 
+	 * @Title: runCrawl
+	 * @Description: 运行爬行程序
+	 * @param
+	 * @return void
+	 * @throws
+	 */
+	public void runCrawl() {
+
+		long startTime = System.currentTimeMillis();
+		System.out.println("begin run..");
+		// 初始化
+		this.init();
+		// 启动
+		this.start();
+		// 检测终止状态
+		while (true) {
+			/** 检查所有线程是否IDLE，检测队列是否为空 **/
+			if (this.isAllEmpty() && this.isAllIdle()) {
+				/**
+				 * 触发线程结束条件
+				 */
+				for (int i = 0; i < this.queueNum; i++) {
+					this.crawlThread[i].forceStop();
+				}
+
+				break;
+			}
+
+		}
+
+		this.httpclient.getConnectionManager().shutdown();
+
+		System.out.println("耗时：" + (System.currentTimeMillis() - startTime)/1000 + "秒");
+		logger.info("耗时：" + (System.currentTimeMillis() - startTime)/1000 + "秒");
+	
+		//TODO 将已经抓取完的数据入库
+			
+
+
+	}
+
+	/**
+	 * 
+	 * 
+	 * @Title: isAllIdle
+	 * @Description: 判断所有的线程是否暂停
+	 * @param @return
+	 * @return boolean
+	 * @throws
+	 */
+	public boolean isAllIdle() {
+		int count = 0;
+		for (GetThread gt : this.crawlThread) {
+			if (gt.getState().equals(State.TIMED_WAITING)) {
+				++count;
+			}
+		}
+		return count == this.queueNum;
+	}
+
+	/**
+	 *  
+	 * @Title: isAllEmpty
+	 * @Description: 判断所有工作队列是否为空
+	 * @param @return
+	 * @return boolean
+	 * @throws
+	 */
+	public boolean isAllEmpty() {
+		int count = 0;
+		for (Integer key : this.multiQueue.keySet()) {
+			if (this.multiQueue.get(key).isEmpty())
+				++count;
+		}
+		return count == this.queueNum;
+	}
+
+	
+}

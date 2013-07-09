@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+    <database>
+        <driver-name>oracle.jdbc.driver.OracleDriver</driver-name>  
+        <url>jdbc:oracle:thin:@127.0.0.1:1521:ORCL</url>  
+        <username>qiannv</username>  
+        <password>123456789</password>   
+    </database>
+        
+    <charset>
+       <url_encoding>gb2312</url_encoding>
+       <parser_enconding>UTF-8</parser_enconding>
+    </charset>
+    
+    <crawler>
+    	<!-- 设置工作队列的个数 -->
+    	<parallelQueue>3</parallelQueue>
+    	
+    	<!-- 5173交易详情中的url包含日期，如果url日期超过下面的指定日期，则进行爬取 -->
+    	<urlBeginDate>20121120</urlBeginDate>
+
+    
+    </crawler>
+    
+    <gamelist>
+    	<game name="qiannv" >
+    		<urlprefix>
+    		</urlprefix>
+    		<urlsubfix>
+    		</urlsubfix>
+    		
+    	</game> 
+    	
+    	<game name="tx3">
+    	
+    	</game> 
+    
+    </gamelist>
+    
+    <file>
+    	<!-- 游戏币保存的路径 -->
+    	<yxb></yxb>
+    
+    </file>
+    
+</config>
